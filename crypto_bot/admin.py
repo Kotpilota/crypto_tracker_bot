@@ -1,6 +1,8 @@
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, Union
+import time
 
 from telebot import TeleBot, types
+from telebot.apihelper import ApiTelegramException
 
 from crypto_bot import database as db
 from crypto_bot.config import ADMIN_ID, DEFAULT_COINS, setup_logger
@@ -169,86 +171,77 @@ def register_admin_handlers(bot: TeleBot, send_message_func: Callable) -> None:
             "<b>Подтверждение рассылки</b>\n\n"
             "Вы собираетесь отправить следующее сообщение всем пользователям:\n\n"
             f"{broadcast_text}\n\n"
-            "Подтвердите отправку:"
+            "Для подтверждения отправьте <b>y</b> или <b>да</b>\n"
+            "Для отмены отправьте <b>n</b> или <b>нет</b>"
         )
-
-        confirm_keyboard = types.InlineKeyboardMarkup(row_width=2)
-        confirm_btn = types.InlineKeyboardButton(
-            "Подтвердить",
-            callback_data=f"admin_confirm_broadcast"
-        )
-        cancel_btn = types.InlineKeyboardButton(
-            "Отменить",
-            callback_data="admin_cancel_broadcast"
-        )
-        confirm_keyboard.add(confirm_btn, cancel_btn)
 
         admin_states[chat_id] = f"confirming_broadcast:{broadcast_text}"
+        send_message_func(chat_id, confirmation_text)
 
-        send_message_func(chat_id, confirmation_text,
-                          reply_markup=confirm_keyboard)
-
-    @bot.callback_query_handler(
-        func=lambda call: call.data in ["admin_confirm_broadcast",
-                                        "admin_cancel_broadcast"])
-    def process_broadcast_confirmation(call: types.CallbackQuery) -> None:
+    @bot.message_handler(func=lambda message: admin_states.get(
+        message.chat.id, "").startswith("confirming_broadcast:"))
+    def process_broadcast_confirmation_text(message: types.Message) -> None:
         """
-        Обработчик подтверждения рассылки.
+        Обработчик текстового подтверждения рассылки (y/n).
         """
-        chat_id = call.message.chat.id
+        chat_id = message.chat.id
+        response = message.text.strip().lower()
 
-        # Отладочное сообщение
-        logger.info(f"Получен callback: {call.data} от пользователя {chat_id}")
+        logger.info(f"Получен ответ: {response} от пользователя {chat_id}")
 
-        # Проверка, что запрос от администратора
         if not check_admin(chat_id):
-            bot.answer_callback_query(call.id,
-                                      "У вас нет прав доступа к этой функции.")
-            return  # Важно: явный return
+            logger.info(f"Пользователь {chat_id} не является администратором")
+            send_message_func(chat_id,
+                              "У вас нет прав доступа к этой функции.")
+            return
 
-        # Отладочное сообщение
-        logger.info(f"Проверка состояния: {admin_states.get(chat_id, '')}")
-
-        # Проверяем, находится ли администратор в режиме подтверждения рассылки
         state = admin_states.get(chat_id, "")
         if not state.startswith("confirming_broadcast:"):
-            bot.answer_callback_query(call.id,
-                                      "Сессия подтверждения рассылки истекла.")
-            return  # Важно: явный return
+            logger.error("Сессия подтверждения рассылки истекла")
+            send_message_func(chat_id,
+                              "Сессия подтверждения рассылки истекла.")
+            return
 
-        # Отмена рассылки
-        if call.data == "admin_cancel_broadcast":
-            bot.answer_callback_query(call.id, "Рассылка отменена")
+        if response in ('n', 'н', 'нет', 'no', 'cancel', 'отмена'):
+            logger.info("Рассылка отменена администратором")
             admin_states.pop(chat_id, None)
             send_message_func(
                 chat_id,
                 "Рассылка отменена. Для возврата в панель администратора используйте /admin"
             )
-            return  # Важно: явный return
+            return
 
-        # Подтверждение рассылки
-        if call.data == "admin_confirm_broadcast":
-            logger.info("Начинаем рассылку...")
-            bot.answer_callback_query(call.id, "Рассылка начата")
+        if response in ('y', 'д', 'да', 'yes', 'ok', 'ок'):
+            logger.info("Администратор подтвердил рассылку")
 
-            # Получаем текст рассылки из состояния
             broadcast_text = state.split(":", 1)[1]
+            logger.info(f"Текст для рассылки: {broadcast_text[:50]}...")
 
-            # Выполняем рассылку
+            send_message_func(chat_id, "Начинаем рассылку сообщений...")
+
+            logger.info("Вызываем функцию broadcast_message")
             result = broadcast_message(bot, broadcast_text)
+            logger.info(f"Функция broadcast_message вернула: {result}")
 
-            # Формируем отчет о результатах
             report = (
                 "<b>Результаты рассылки</b>\n\n"
                 f"Сообщение успешно отправлено: {result['success']} пользователям\n"
-                f"Ошибки при отправке: {result['failed']} пользователям\n\n"
+                f"Не отправлено: {result['failed']} пользователям\n\n"
                 "Для возврата в панель администратора используйте /admin"
             )
 
-            # Сбрасываем состояние и отправляем отчет
-            admin_states.pop(chat_id, None)
+            logger.info("Отправляем отчет администратору")
             send_message_func(chat_id, report)
-            return  # Важно: явный return
+
+            # Сбрасываем состояние
+            admin_states.pop(chat_id, None)
+            logger.info("Состояние сброшено, рассылка завершена")
+            return
+
+        send_message_func(
+            chat_id,
+            "Не понял ваш ответ. Отправьте <b>y</b> для подтверждения или <b>n</b> для отмены."
+        )
 
 
 def get_admin_stats() -> str:
@@ -303,40 +296,56 @@ def get_admin_stats() -> str:
 
 def broadcast_message(bot: TeleBot, text: str) -> Dict[str, int]:
     """
-    Отправляет сообщение всем пользователям бота.
-
-    Args:
-        bot: Экземпляр бота
-        text: Текст сообщения для рассылки
-
-    Returns:
-        Dict[str, int]: Словарь с результатами рассылки
+    Отправляет сообщение всем пользователям бота с увеличенной задержкой.
     """
+    logger.info("Начинаем рассылку сообщений")
 
-    with db.get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT chat_id FROM user_settings")
-        rows = cursor.fetchall()
-        user_ids = [row[0] for row in rows]
+    user_ids = []
+    try:
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT chat_id FROM user_settings")
+            rows = cursor.fetchall()
+            user_ids = [row[0] for row in rows]
+        logger.info(f"Получен список пользователей: {user_ids}")
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка пользователей: {e}")
+        return {"success": 0, "failed": 0}
 
     results = {"success": 0, "failed": 0}
 
     header = "<b>📣 Объявление от администратора</b>\n\n"
     full_message = f"{header}{text}"
 
-    for chat_id in user_ids:
+    logger.info(f"Начинаем отправку сообщений {len(user_ids)} пользователям")
+
+    for i, chat_id in enumerate(user_ids):
         try:
+            logger.info(
+                f"Отправляем сообщение пользователю {chat_id} ({i + 1}/{len(user_ids)})")
+            if i > 0:
+                logger.info(
+                    f"Ждем 3 секунды перед отправкой следующего сообщения")
+                time.sleep(0.5)
+
             bot.send_message(chat_id, full_message, parse_mode='HTML')
+            logger.info(f"Сообщение успешно отправлено пользователю {chat_id}")
             results["success"] += 1
 
-            import time
-            time.sleep(0.1)
+        except ApiTelegramException as error:
+            logger.error(
+                f"Telegram API ошибка для пользователя {chat_id}: {error}")
+            if error.error_code == 403 and "bot was blocked by the user" in error.description:
+                logger.warning(
+                    f"Пользователь {chat_id} заблокировал бота. Удаляем из базы данных.")
+                db.remove_user(chat_id)
+            results["failed"] += 1
+
         except Exception as e:
             logger.error(
-                f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+                f"Неизвестная ошибка при отправке сообщения пользователю {chat_id}: {e}")
             results["failed"] += 1
 
     logger.info(
         f"Рассылка завершена. Успешно: {results['success']}, Ошибок: {results['failed']}")
-
     return results
