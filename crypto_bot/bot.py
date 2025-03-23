@@ -224,6 +224,16 @@ def send_welcome(message: types.Message) -> None:
         db.update_user_settings(chat_id)
         logger.info(f"Новый пользователь: {chat_id}")
 
+    try:
+        bot.send_message(
+            chat_id,
+            ".",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        bot.delete_message(chat_id, message.message_id + 1)
+    except:
+        pass
+
     welcome_text = (
         "<b>👋 Добро пожаловать в Crypto Tracker!</b>\n\n"
         "Я бот для отслеживания курса криптовалюты FPI Bank.\n"

@@ -332,8 +332,7 @@ def broadcast_message(bot: TeleBot, text: str) -> Dict[str, int]:
 
     results = {"success": 0, "failed": 0}
 
-    header = "<b>📣 Объявление от администратора</b>\n\n"
-    full_message = f"{header}{text}"
+    full_message = f"{text}"
 
     logger.info(f"Начинаем отправку сообщений {len(user_ids)} пользователям")
 
@@ -343,7 +342,7 @@ def broadcast_message(bot: TeleBot, text: str) -> Dict[str, int]:
                 f"Отправляем сообщение пользователю {chat_id} ({i + 1}/{len(user_ids)})")
             if i > 0:
                 logger.info(
-                    f"Ждем 3 секунды перед отправкой следующего сообщения")
+                    f"Ждем 0.5 секунды перед отправкой следующего сообщения")
                 time.sleep(0.5)
 
             bot.send_message(chat_id, full_message, parse_mode='HTML')
