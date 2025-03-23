@@ -1,10 +1,4 @@
-"""
-Основной модуль Telegram-бота для отслеживания курса криптовалют.
-"""
-
 import time
-from threading import Thread
-from typing import Dict, Optional
 
 from telebot import TeleBot, types
 from telebot.apihelper import ApiTelegramException
@@ -13,7 +7,7 @@ from requests.exceptions import RequestException
 from crypto_bot import api
 from crypto_bot import database as db
 from crypto_bot import admin
-from crypto_bot.config import (ADMIN_ID, DEFAULT_COINS, DEFAULT_THRESHOLD,
+from crypto_bot.config import (DEFAULT_COINS, DEFAULT_THRESHOLD,
                                LOGGER_ID,
                                RETRY_PERIOD, TELEGRAM_TOKEN, setup_logger)
 
@@ -33,24 +27,54 @@ def load_settings():
     logger.info(f"Загружены настройки для {len(user_settings)} пользователей")
 
 
-def get_main_keyboard() -> types.ReplyKeyboardMarkup:
+def set_menu_button():
     """
-    Формирует основную клавиатуру бота.
+    Устанавливает кнопку меню в левой части интерфейса бота.
+    """
+    commands = [
+        types.BotCommand(command="start", description="Запустить бота"),
+        types.BotCommand(command="menu", description="Открыть главное меню")
+    ]
+    bot.set_my_commands(commands)
+
+
+def get_main_menu_keyboard() -> types.InlineKeyboardMarkup:
+    """
+    Формирует основную встроенную клавиатуру бота для управления настройками криптовалют.
 
     Returns:
-        types.ReplyKeyboardMarkup: Объект клавиатуры
+        types.InlineKeyboardMarkup: Объект встроенной клавиатуры
     """
-    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    btn_balance = types.KeyboardButton("Изменить количество монет")
-    btn_threshold = types.KeyboardButton("Изменить порог уведомлений")
-    btn_depozit = types.KeyboardButton("Указать вложение в монету")
-    btn_info = types.KeyboardButton("Текущая информация")
-    keyboard.add(btn_balance, btn_threshold, btn_depozit, btn_info)
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    btn_info = types.InlineKeyboardButton("Текущая информация 📊", callback_data="current_info")
+    btn_balance = types.InlineKeyboardButton("Изменить кол-во монет 🪙", callback_data="set_balance")
+    keyboard.row(btn_info, btn_balance)
+
+    btn_threshold = types.InlineKeyboardButton("Порог уведомлений ⚙️", callback_data="set_threshold")
+    btn_deposit = types.InlineKeyboardButton("Указать вложение 💰", callback_data="set_deposit")
+    keyboard.row(btn_threshold, btn_deposit)
+
+    btn_price_alerts = types.InlineKeyboardButton("Настройка уведомлений о цене 🔔", callback_data="price_alerts")
+    keyboard.row(btn_price_alerts)
+
+    btn_help = types.InlineKeyboardButton("Помощь ❓", callback_data="help_info")
+    keyboard.row(btn_help)
+
     return keyboard
 
 
-def send_message(chat_id: int, message: str, reply_markup: Optional[
-    types.ReplyKeyboardMarkup] = None) -> None:
+def get_back_to_menu_keyboard() -> types.InlineKeyboardMarkup:
+    """
+    Создает клавиатуру с кнопкой возврата в меню.
+    """
+    keyboard = types.InlineKeyboardMarkup()
+    btn_back = types.InlineKeyboardButton("« Вернуться в меню", callback_data="back_to_menu")
+    keyboard.add(btn_back)
+    return keyboard
+
+
+def send_message(chat_id: int, message: str, reply_markup=None, parse_mode='HTML') -> None:
     """
     Отправляет сообщение в Telegram.
     Если пользователь заблокировал бота, удаляет его из базы данных.
@@ -59,10 +83,11 @@ def send_message(chat_id: int, message: str, reply_markup: Optional[
         chat_id: ID чата пользователя
         message: Текст сообщения
         reply_markup: Объект клавиатуры (опционально)
+        parse_mode: Режим разметки текста (по умолчанию HTML)
     """
     try:
         bot.send_message(chat_id, message, reply_markup=reply_markup,
-                         parse_mode='HTML')
+                         parse_mode=parse_mode)
     except ApiTelegramException as error:
         if error.error_code == 403 and "bot was blocked by the user" in error.description:
             logger.warning(
@@ -178,11 +203,12 @@ def price_checker() -> None:
 
         time.sleep(RETRY_PERIOD)
 
-@bot.message_handler(commands=["start"])
+
+@bot.message_handler(commands=["start", "menu"])
 def send_welcome(message: types.Message) -> None:
     """
-    Обработчик команды /start.
-    Отправляет приветственное сообщение и инструкции по использованию.
+    Обработчик команд /start и /menu.
+    Отправляет приветственное сообщение и меню.
     """
     chat_id = message.chat.id
 
@@ -198,56 +224,161 @@ def send_welcome(message: types.Message) -> None:
         logger.info(f"Новый пользователь: {chat_id}")
 
     welcome_text = (
-        "👋 <b>Привет!</b>\n\n"
-        "Я бот для отслеживания курса криптовалюты.\n"
-        "По умолчанию я отслеживаю монету <b>FPI Bank</b>, но в будущем смогу отслеживать и другие.\n\n"
-        "<b>Для работы мне нужны следующие параметры:</b>\n"
-        "• Количество монет (обязательно)\n"
-        "• Порог уведомлений (по умолчанию 0.1)\n"
-        "• Вложение в монету (опционально, для расчёта прибыли)\n\n"
-        "Используйте кнопки ниже для быстрого ввода нужных параметров."
+        "<b>👋 Добро пожаловать в Crypto Tracker!</b>\n\n"
+        "Я бот для отслеживания курса криптовалюты FPI Bank.\n"
+        "Вы можете настроить количество монет, получать уведомления "
+        "об изменении курса и отслеживать вашу прибыль.\n\n"
+        "Используйте кнопки ниже для настройки."
     )
 
-    keyboard = get_main_keyboard()
+    keyboard = get_main_menu_keyboard()
     send_message(chat_id, welcome_text, reply_markup=keyboard)
 
 
-@bot.message_handler(
-    func=lambda message: message.text == "Изменить количество монет")
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback_query(call: types.CallbackQuery) -> None:
+    """
+    Обработчик нажатий на встроенные кнопки.
+    """
+    chat_id = call.message.chat.id
+
+    bot.answer_callback_query(call.id)
+
+    if call.data == "current_info":
+        show_current_info(call.message)
+    elif call.data == "set_balance":
+        request_balance(call.message)
+    elif call.data == "set_threshold":
+        request_threshold(call.message)
+    elif call.data == "set_deposit":
+        request_depozit(call.message)
+    elif call.data == "price_alerts":
+        threshold = user_settings.get(chat_id, {}).get("threshold", DEFAULT_THRESHOLD)
+        alerts_info = (
+            "<b>🔔 Настройка уведомлений о цене</b>\n\n"
+            "Уведомления отправляются когда цена изменяется на величину, "
+            "большую или равную указанному порогу.\n\n"
+            f"Текущий порог: <b>{threshold}</b> руб.\n\n"
+            "Используйте кнопку 'Порог уведомлений' для изменения этого значения."
+        )
+
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            text=alerts_info,
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode='HTML'
+        )
+    elif call.data == "help_info":
+        help_text = (
+            "<b>❓ Справка</b>\n\n"
+            "<b>Как пользоваться ботом:</b>\n"
+            "1. Укажите количество имеющихся у вас монет\n"
+            "2. При желании укажите сумму вложения для расчета прибыли\n"
+            "3. Настройте порог уведомлений\n\n"
+            "Бот будет автоматически отслеживать изменения курса и уведомлять вас "
+            "когда цена изменится на величину, превышающую указанный порог.\n\n"
+            "По любым вопросам обращайтесь к администратору: @kotpilota"
+        )
+
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            text=help_text,
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode='HTML'
+        )
+    elif call.data == "back_to_menu":
+        back_to_menu(call)
+    elif call.data == "open_menu":
+        open_menu_from_button(call)
+
+
 def request_balance(message: types.Message) -> None:
     """Запрашивает у пользователя количество монет."""
     chat_id = message.chat.id
-    send_message(chat_id, "Введите новое количество монет:")
+
+    text = (
+        "<b>🪙 Изменение количества монет</b>\n\n"
+        "Введите новое количество монет:"
+    )
+
+    if hasattr(message, 'message_id'):
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message.message_id,
+            text=text,
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode='HTML'
+        )
+    else:
+        send_message(chat_id, text, reply_markup=get_back_to_menu_keyboard())
+
     user_states[chat_id] = "awaiting_balance"
 
 
-@bot.message_handler(
-    func=lambda message: message.text == "Изменить порог уведомлений")
 def request_threshold(message: types.Message) -> None:
     """Запрашивает у пользователя порог уведомлений."""
     chat_id = message.chat.id
-    send_message(chat_id, "Введите новый порог уведомлений (например, 0.1):")
+
+    text = (
+        "<b>⚙️ Настройка порога уведомлений</b>\n\n"
+        "Введите новый порог уведомлений (например, 0.1):"
+    )
+
+    if hasattr(message, 'message_id'):
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message.message_id,
+            text=text,
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode='HTML'
+        )
+    else:
+        send_message(chat_id, text, reply_markup=get_back_to_menu_keyboard())
+
     user_states[chat_id] = "awaiting_threshold"
 
 
-@bot.message_handler(
-    func=lambda message: message.text == "Указать вложение в монету")
 def request_depozit(message: types.Message) -> None:
     """Запрашивает у пользователя сумму вложения."""
     chat_id = message.chat.id
-    send_message(chat_id, "Введите сумму вложения в рублях:")
+
+    text = (
+        "<b>💰 Указание вложения</b>\n\n"
+        "Введите сумму вложения в рублях:"
+    )
+
+    if hasattr(message, 'message_id'):
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message.message_id,
+            text=text,
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode='HTML'
+        )
+    else:
+        send_message(chat_id, text, reply_markup=get_back_to_menu_keyboard())
+
     user_states[chat_id] = "awaiting_depozit"
 
 
-@bot.message_handler(func=lambda message: message.text == "Текущая информация")
 def show_current_info(message: types.Message) -> None:
     """Показывает текущую информацию о цене и настройках пользователя."""
     chat_id = message.chat.id
     settings = user_settings.get(chat_id)
 
     if not settings:
-        send_message(chat_id,
-                     "Ваши настройки не найдены. Используйте /start для настройки бота.")
+        text = "Ваши настройки не найдены. Используйте /menu для настройки бота."
+        if hasattr(message, 'message_id'):
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                text=text,
+                reply_markup=get_back_to_menu_keyboard()
+            )
+        else:
+            send_message(chat_id, text)
         return
 
     coin_id = settings.get("coin_id", "fpi-bank")
@@ -259,46 +390,94 @@ def show_current_info(message: types.Message) -> None:
         price, error = api.get_coin_price(coin_id)
 
         if price is None:
-            send_message(chat_id, f"Не удалось получить текущую цену: {error}")
+            text = f"Не удалось получить текущую цену: {error}"
+            if hasattr(message, 'message_id'):
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message.message_id,
+                    text=text,
+                    reply_markup=get_back_to_menu_keyboard()
+                )
+            else:
+                send_message(chat_id, text, reply_markup=get_back_to_menu_keyboard())
             return
 
         coin_name = DEFAULT_COINS.get(coin_id, {}).get("name", coin_id.upper())
-        currency = DEFAULT_COINS.get(coin_id, {}).get("currency",
-                                                      "rub").upper()
+        currency = DEFAULT_COINS.get(coin_id, {}).get("currency", "rub").upper()
 
         info_parts = [
-            f"<b>Монета</b>: {coin_name}",
-            f"<b>Текущая цена</b>: {price:,.2f} {currency}",
-            f"<b>Порог уведомлений</b>: {threshold:,.2f} {currency}"
+            f"<b>📊 Информация о {coin_name}</b>",
+            f"<b>💵 Текущая цена</b>: {price:,.2f} {currency}",
+            f"<b>⚙️ Порог уведомлений</b>: {threshold:,.2f} {currency}"
         ]
 
         if balance is not None:
             updated_balance = balance * price * 0.97
             formatted_balance = f"{updated_balance:,.2f}".replace(",", " ")
-            info_parts.append(f"<b>Количество монет</b>: {balance:,.2f}")
+            info_parts.append(f"<b>🪙 Количество монет</b>: {balance:,.2f}")
             info_parts.append(
-                f"<b>Текущий баланс</b>: {formatted_balance} {currency}")
+                f"<b>💰 Текущий баланс</b>: {formatted_balance} {currency}")
 
             if depozit > 0:
                 profit = updated_balance - depozit
                 profit_percent = (profit / depozit) * 100
-                info_parts.append(f"<b>Вложено</b>: {depozit:,.2f} {currency}")
+                info_parts.append(f"<b>💸 Вложено</b>: {depozit:,.2f} {currency}")
                 info_parts.append(
-                    f"<b>Прибыль/убыток</b>: {profit:,.2f} {currency} ({profit_percent:+.2f}%)"
+                    f"<b>📈 Прибыль/убыток</b>: {profit:,.2f} {currency} ({profit_percent:+.2f}%)"
                 )
         else:
-            info_parts.append("<b>Количество монет</b>: не указано")
+            info_parts.append("<b>🪙 Количество монет</b>: не указано")
 
-        message = "\n".join(info_parts)
-        send_message(chat_id, message, reply_markup=get_main_keyboard())
+        message_text = "\n\n".join(info_parts)
+
+        if hasattr(message, 'message_id'):
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                text=message_text,
+                reply_markup=get_back_to_menu_keyboard(),
+                parse_mode='HTML'
+            )
+        else:
+            send_message(
+                chat_id,
+                message_text,
+                reply_markup=get_back_to_menu_keyboard()
+            )
 
     except Exception as error:
         logger.error(f"Ошибка при получении информации: {error}")
-        send_message(
-            chat_id,
-            "Произошла ошибка при получении информации. Пожалуйста, попробуйте позже.",
-            reply_markup=get_main_keyboard()
-        )
+
+        error_text = "Произошла ошибка при получении информации. Пожалуйста, попробуйте позже."
+
+        if hasattr(message, 'message_id'):
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                text=error_text,
+                reply_markup=get_back_to_menu_keyboard()
+            )
+        else:
+            send_message(
+                chat_id,
+                error_text,
+                reply_markup=get_back_to_menu_keyboard()
+            )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
+def back_to_menu(call: types.CallbackQuery) -> None:
+    """Возвращает пользователя в главное меню."""
+    chat_id = call.message.chat.id
+
+    user_states.pop(chat_id, None)
+
+    bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        text="Выберите действие:",
+        reply_markup=get_main_menu_keyboard()
+    )
 
 
 @bot.message_handler(func=lambda message: user_states.get(
@@ -317,11 +496,15 @@ def set_balance(message: types.Message) -> None:
         user_settings[chat_id]["balance"] = balance
         db.update_user_settings(chat_id, balance=balance)
 
-        send_message(
-            chat_id,
-            f"Количество монет обновлено: <b>{balance:,.2f}</b>",
-            reply_markup=get_main_keyboard()
+        success_text = (
+            "<b>✅ Успешно!</b>\n\n"
+            f"Количество монет обновлено: <b>{balance:,.2f}</b>"
         )
+
+        send_message(chat_id, success_text)
+
+        keyboard = get_main_menu_keyboard()
+        send_message(chat_id, "Выберите действие:", reply_markup=keyboard)
 
         user_states.pop(chat_id, None)
 
@@ -346,11 +529,15 @@ def set_threshold(message: types.Message) -> None:
         user_settings[chat_id]["threshold"] = threshold
         db.update_user_settings(chat_id, threshold=threshold)
 
-        send_message(
-            chat_id,
-            f"Порог уведомлений обновлен: <b>{threshold:,.2f}</b>",
-            reply_markup=get_main_keyboard()
+        success_text = (
+            "<b>✅ Успешно!</b>\n\n"
+            f"Порог уведомлений обновлен: <b>{threshold:,.2f}</b>"
         )
+
+        send_message(chat_id, success_text)
+
+        keyboard = get_main_menu_keyboard()
+        send_message(chat_id, "Выберите действие:", reply_markup=keyboard)
 
         user_states.pop(chat_id, None)
 
@@ -375,11 +562,15 @@ def set_depozit(message: types.Message) -> None:
         user_settings[chat_id]["depozit"] = depozit
         db.update_user_settings(chat_id, depozit=depozit)
 
-        send_message(
-            chat_id,
-            f"Сумма вложения обновлена: <b>{depozit:,.2f}</b>",
-            reply_markup=get_main_keyboard()
+        success_text = (
+            "<b>✅ Успешно!</b>\n\n"
+            f"Сумма вложения обновлена: <b>{depozit:,.2f}</b>"
         )
+
+        send_message(chat_id, success_text)
+
+        keyboard = get_main_menu_keyboard()
+        send_message(chat_id, "Выберите действие:", reply_markup=keyboard)
 
         user_states.pop(chat_id, None)
 
@@ -388,15 +579,36 @@ def set_depozit(message: types.Message) -> None:
                      "Ошибка. Введите корректное число для суммы вложения:")
 
 
-admin.register_admin_handlers(bot, send_message)
+@bot.callback_query_handler(func=lambda call: call.data == "open_menu")
+def open_menu_from_button(call: types.CallbackQuery) -> None:
+    """Открывает меню при нажатии на кнопку."""
+    chat_id = call.message.chat.id
+    bot.answer_callback_query(call.id)
+
+    keyboard = get_main_menu_keyboard()
+    send_message(chat_id, "Выберите действие:", reply_markup=keyboard)
 
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message: types.Message) -> None:
     """Обрабатывает все остальные сообщения."""
     chat_id = message.chat.id
+
+    if message.text.lower() == '/menu':
+        send_welcome(message)
+        return
+
+    if chat_id in user_states:
+        return
+
     send_message(
         chat_id,
-        "Я не понимаю эту команду. Используйте кнопки меню или /start для настройки бота.",
-        reply_markup=get_main_keyboard()
+        "Я не понимаю эту команду. Используйте /menu для вызова меню бота."
     )
+    menu_button = types.InlineKeyboardMarkup()
+    btn_menu = types.InlineKeyboardButton("Открыть меню", callback_data="open_menu")
+    menu_button.add(btn_menu)
+    send_message(chat_id, "Или нажмите на кнопку ниже:", reply_markup=menu_button)
+
+
+admin.register_admin_handlers(bot, send_message)
