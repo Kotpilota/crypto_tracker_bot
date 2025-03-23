@@ -241,7 +241,6 @@ def send_welcome(message: types.Message) -> None:
         "об изменении курса и отслеживать вашу прибыль.\n\n"
         "Используйте кнопки ниже для настройки."
     )
-
     keyboard = get_main_menu_keyboard()
     send_message(chat_id, welcome_text, reply_markup=keyboard)
 
