@@ -7,7 +7,7 @@ from requests.exceptions import RequestException
 from crypto_bot import api
 from crypto_bot import database as db
 from crypto_bot import admin
-from crypto_bot.config import (DEFAULT_COINS, DEFAULT_THRESHOLD,
+from crypto_bot.config import (ADMIN_ID, DEFAULT_COINS, DEFAULT_THRESHOLD,
                                LOGGER_ID,
                                RETRY_PERIOD, TELEGRAM_TOKEN, setup_logger)
 
@@ -33,7 +33,8 @@ def set_menu_button():
     """
     commands = [
         types.BotCommand(command="start", description="Запустить бота"),
-        types.BotCommand(command="menu", description="Открыть главное меню")
+        types.BotCommand(command="menu", description="Открыть главное меню"),
+        types.BotCommand(command="admin", description="Админка")
     ]
     bot.set_my_commands(commands)
 
@@ -235,7 +236,7 @@ def send_welcome(message: types.Message) -> None:
     send_message(chat_id, welcome_text, reply_markup=keyboard)
 
 
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(func=lambda call: not call.data.startswith("admin_"))
 def handle_callback_query(call: types.CallbackQuery) -> None:
     """
     Обработчик нажатий на встроенные кнопки.
@@ -588,6 +589,7 @@ def open_menu_from_button(call: types.CallbackQuery) -> None:
     keyboard = get_main_menu_keyboard()
     send_message(chat_id, "Выберите действие:", reply_markup=keyboard)
 
+admin.register_admin_handlers(bot, send_message)
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message: types.Message) -> None:
@@ -596,6 +598,18 @@ def echo_all(message: types.Message) -> None:
 
     if message.text.lower() == '/menu':
         send_welcome(message)
+        return
+
+    if message.text.lower() == '/admin':
+        if admin.check_admin(chat_id):
+            admin_menu_text = (
+                "<b>Панель администратора</b>\n\n"
+                "Выберите действие из меню ниже:"
+            )
+            keyboard = admin.get_admin_keyboard()
+            send_message(chat_id, admin_menu_text, reply_markup=keyboard)
+        else:
+            send_message(chat_id, "У вас нет прав доступа к этой команде.")
         return
 
     if chat_id in user_states:
@@ -609,6 +623,3 @@ def echo_all(message: types.Message) -> None:
     btn_menu = types.InlineKeyboardButton("Открыть меню", callback_data="open_menu")
     menu_button.add(btn_menu)
     send_message(chat_id, "Или нажмите на кнопку ниже:", reply_markup=menu_button)
-
-
-admin.register_admin_handlers(bot, send_message)

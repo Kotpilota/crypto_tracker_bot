@@ -48,6 +48,29 @@ def get_admin_keyboard() -> types.InlineKeyboardMarkup:
     return keyboard
 
 
+def get_broadcast_confirmation_keyboard() -> types.InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для подтверждения рассылки.
+
+    Returns:
+        types.InlineKeyboardMarkup: Объект клавиатуры
+    """
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    confirm_btn = types.InlineKeyboardButton(
+        "✅ Подтвердить",
+        callback_data="admin_confirm_broadcast"
+    )
+
+    cancel_btn = types.InlineKeyboardButton(
+        "❌ Отменить",
+        callback_data="admin_cancel_broadcast"
+    )
+
+    keyboard.add(confirm_btn, cancel_btn)
+    return keyboard
+
+
 def register_admin_handlers(bot: TeleBot, send_message_func: Callable) -> None:
     """
     Регистрирует обработчики команд администратора.
@@ -67,8 +90,16 @@ def register_admin_handlers(bot: TeleBot, send_message_func: Callable) -> None:
         chat_id = message.chat.id
 
         if not check_admin(chat_id):
-            send_message_func(chat_id,
-                              "У вас нет прав доступа к этой команде.")
+            menu_keyboard = types.InlineKeyboardMarkup()
+            menu_btn = types.InlineKeyboardButton("🔙 Вернуться в меню",
+                                                  callback_data="open_menu")
+            menu_keyboard.add(menu_btn)
+
+            send_message_func(
+                chat_id,
+                "У вас нет прав доступа к этой команде.",
+                reply_markup=menu_keyboard
+            )
             return
 
         admin_menu_text = (
@@ -149,6 +180,56 @@ def register_admin_handlers(bot: TeleBot, send_message_func: Callable) -> None:
                 reply_markup=keyboard
             )
 
+        elif call.data == "admin_confirm_broadcast":
+            bot.answer_callback_query(call.id, "Начинаем рассылку...")
+
+            state = admin_states.get(chat_id, "")
+            if not state.startswith("confirming_broadcast:"):
+                bot.answer_callback_query(call.id,
+                                          "Сессия подтверждения рассылки истекла.")
+                return
+
+            broadcast_text = state.split(":", 1)[1]
+            logger.info(f"Текст для рассылки: {broadcast_text[:50]}...")
+
+            # Обновляем сообщение, убираем кнопки
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="Начинаем рассылку сообщений...",
+                reply_markup=None
+            )
+
+            logger.info("Вызываем функцию broadcast_message")
+            result = broadcast_message(bot, broadcast_text)
+            logger.info(f"Функция broadcast_message вернула: {result}")
+
+            report = (
+                "<b>Результаты рассылки</b>\n\n"
+                f"Сообщение успешно отправлено: {result['success']} пользователям\n"
+                f"Не отправлено: {result['failed']} пользователям\n\n"
+                "Для возврата в панель администратора используйте /admin"
+            )
+
+            logger.info("Отправляем отчет администратору")
+            send_message_func(chat_id, report)
+
+            # Сбрасываем состояние
+            admin_states.pop(chat_id, None)
+            logger.info("Состояние сброшено, рассылка завершена")
+
+        elif call.data == "admin_cancel_broadcast":
+            bot.answer_callback_query(call.id, "Рассылка отменена")
+            admin_states.pop(chat_id, None)
+
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="Рассылка отменена. Для возврата в панель администратора используйте /admin",
+                reply_markup=None
+            )
+            logger.info("Рассылка отменена администратором")
+
     @bot.message_handler(func=lambda message: admin_states.get(
         message.chat.id) == "awaiting_broadcast_text")
     def process_broadcast_text(message: types.Message) -> None:
@@ -171,77 +252,14 @@ def register_admin_handlers(bot: TeleBot, send_message_func: Callable) -> None:
             "<b>Подтверждение рассылки</b>\n\n"
             "Вы собираетесь отправить следующее сообщение всем пользователям:\n\n"
             f"{broadcast_text}\n\n"
-            "Для подтверждения отправьте <b>y</b> или <b>да</b>\n"
-            "Для отмены отправьте <b>n</b> или <b>нет</b>"
+            "Нажмите соответствующую кнопку для подтверждения или отмены рассылки."
         )
 
         admin_states[chat_id] = f"confirming_broadcast:{broadcast_text}"
-        send_message_func(chat_id, confirmation_text)
 
-    @bot.message_handler(func=lambda message: admin_states.get(
-        message.chat.id, "").startswith("confirming_broadcast:"))
-    def process_broadcast_confirmation_text(message: types.Message) -> None:
-        """
-        Обработчик текстового подтверждения рассылки (y/n).
-        """
-        chat_id = message.chat.id
-        response = message.text.strip().lower()
-
-        logger.info(f"Получен ответ: {response} от пользователя {chat_id}")
-
-        if not check_admin(chat_id):
-            logger.info(f"Пользователь {chat_id} не является администратором")
-            send_message_func(chat_id,
-                              "У вас нет прав доступа к этой функции.")
-            return
-
-        state = admin_states.get(chat_id, "")
-        if not state.startswith("confirming_broadcast:"):
-            logger.error("Сессия подтверждения рассылки истекла")
-            send_message_func(chat_id,
-                              "Сессия подтверждения рассылки истекла.")
-            return
-
-        if response in ('n', 'н', 'нет', 'no', 'cancel', 'отмена'):
-            logger.info("Рассылка отменена администратором")
-            admin_states.pop(chat_id, None)
-            send_message_func(
-                chat_id,
-                "Рассылка отменена. Для возврата в панель администратора используйте /admin"
-            )
-            return
-
-        if response in ('y', 'д', 'да', 'yes', 'ok', 'ок'):
-            logger.info("Администратор подтвердил рассылку")
-
-            broadcast_text = state.split(":", 1)[1]
-            logger.info(f"Текст для рассылки: {broadcast_text[:50]}...")
-
-            send_message_func(chat_id, "Начинаем рассылку сообщений...")
-
-            logger.info("Вызываем функцию broadcast_message")
-            result = broadcast_message(bot, broadcast_text)
-            logger.info(f"Функция broadcast_message вернула: {result}")
-
-            report = (
-                "<b>Результаты рассылки</b>\n\n"
-                f"Сообщение успешно отправлено: {result['success']} пользователям\n"
-                f"Не отправлено: {result['failed']} пользователям\n\n"
-                "Для возврата в панель администратора используйте /admin"
-            )
-
-            logger.info("Отправляем отчет администратору")
-            send_message_func(chat_id, report)
-
-            # Сбрасываем состояние
-            admin_states.pop(chat_id, None)
-            logger.info("Состояние сброшено, рассылка завершена")
-            return
-
-        send_message_func(
-            chat_id,
-            "Не понял ваш ответ. Отправьте <b>y</b> для подтверждения или <b>n</b> для отмены."
-        )
+        # Отправляем сообщение с кнопками вместо запроса текстового подтверждения
+        keyboard = get_broadcast_confirmation_keyboard()
+        send_message_func(chat_id, confirmation_text, reply_markup=keyboard)
 
 
 def get_admin_stats() -> str:
