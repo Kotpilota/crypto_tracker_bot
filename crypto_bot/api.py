@@ -1,6 +1,5 @@
-import time
 from http import HTTPStatus
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple
 
 import requests
 from requests.exceptions import RequestException, Timeout

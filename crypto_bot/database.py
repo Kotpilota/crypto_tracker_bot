@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from crypto_bot.config import DB_FILE, setup_logger
 

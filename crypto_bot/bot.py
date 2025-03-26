@@ -1,13 +1,13 @@
 import time
 
+from requests.exceptions import RequestException
 from telebot import TeleBot, types
 from telebot.apihelper import ApiTelegramException
-from requests.exceptions import RequestException
 
+from crypto_bot import admin
 from crypto_bot import api
 from crypto_bot import database as db
-from crypto_bot import admin
-from crypto_bot.config import (ADMIN_ID, DEFAULT_COINS, DEFAULT_THRESHOLD,
+from crypto_bot.config import (DEFAULT_COINS, DEFAULT_THRESHOLD,
                                LOGGER_ID,
                                RETRY_PERIOD, TELEGRAM_TOKEN, setup_logger)
 

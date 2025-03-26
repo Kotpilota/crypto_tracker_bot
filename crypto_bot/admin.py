@@ -1,5 +1,5 @@
-from typing import Callable, Dict, Union
 import time
+from typing import Callable, Dict, Union
 
 from telebot import TeleBot, types
 from telebot.apihelper import ApiTelegramException
