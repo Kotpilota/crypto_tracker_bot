@@ -44,3 +44,4 @@ logs/
 # ОС
 .DS_Store
 Thumbs.db
+fuxture.json
